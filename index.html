@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phiếu Xuất Kho</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS (Thư viện xử lý Excel) -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    
+    <style>
+        /* CSS dành riêng cho bản in */
+        @media print {
+            @page { size: A4; margin: 1.5cm; }
+            body { 
+                -webkit-print-color-adjust: exact; 
+                print-color-adjust: exact; 
+                background-color: white !important;
+            }
+            input, textarea { 
+                border: none !important; 
+                resize: none !important; 
+                padding: 0 !important; 
+                background: transparent !important;
+            }
+            input::placeholder { color: transparent; }
+            .print\:hidden { display: none !important; }
+        }
+        body { font-family: 'Times New Roman', Times, serif; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef } = React;
+
+        // --- Các Icon SVG ---
+        const PrinterIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>;
+        const PlusIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>;
+        const EditIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>;
+        const CheckIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>;
+        const DownloadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
+        const UploadIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>;
+
+        // --- Helper Functions ---
+        const formatCurrency = (number) => {
+            if (!number) return '';
+            return new Intl.NumberFormat('vi-VN').format(number);
+        };
+
+        const generateVoucherNumber = () => {
+            const today = new Date();
+            const day = today.getDate().toString().padStart(2, '0');
+            const month = (today.getMonth() + 1).toString().padStart(2, '0');
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            const randomChar = chars.charAt(Math.floor(Math.random() * chars.length));
+            const randomNum = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+            return `XK${day}${month}${randomChar}${randomNum}`;
+        };
+
+        const numberToWordsVietnamese = (number) => {
+            if (number === 0) return 'Không đồng';
+            if (!number) return '';
+
+            const units = ['', 'một', 'hai', 'ba', 'bốn', 'năm', 'sáu', 'bảy', 'tám', 'chín'];
+            const places = ['', 'nghìn', 'triệu', 'tỷ', 'nghìn tỷ', 'triệu tỷ'];
+
+            let str = number.toString().replace(/,/g, '');
+            let words = [];
+            let placeIndex = 0;
+
+            const readBlock = (n) => {
+                let block = '';
+                const h = Math.floor(n / 100);
+                const t = Math.floor((n % 100) / 10);
+                const u = n % 10;
+
+                if (h > 0) {
+                    block += units[h] + ' trăm ';
+                    if (t === 0 && u > 0) block += 'lẻ ';
+                }
+                
+                if (t === 1) {
+                    block += 'mười ';
+                } else if (t > 1) {
+                    block += units[t] + ' mươi ';
+                }
+
+                if (u === 1 && t > 1) {
+                    block += 'mốt ';
+                } else if (u === 5 && t > 0) {
+                    block += 'lăm ';
+                } else if (u > 0 || (u === 0 && t === 0 && h === 0 && block === '')) {
+                    if (u !== 0) block += units[u] + ' ';
+                }
+
+                return block.trim();
+            };
+
+            while (str.length > 0) {
+                const blockStr = str.slice(-3);
+                str = str.slice(0, -3);
+                const blockNum = parseInt(blockStr, 10);
+
+                if (blockNum > 0) {
+                    let blockText = readBlock(blockNum);
+                    if (placeIndex > 0) blockText += ' ' + places[placeIndex];
+                    words.unshift(blockText);
+                }
+                placeIndex++;
+            }
+
+            let result = words.join(' ').trim();
+            result = result.charAt(0).toUpperCase() + result.slice(1);
+            return result + ' đồng chẵn.';
+        };
+
+        // --- Main App Component ---
+        function App() {
+            const [isEditing, setIsEditing] = useState(true); 
+            const fileInputRef = useRef(null);
+
+            const [headerInfo, setHeaderInfo] = useState({
+                donVi: 'ĐÈN HÀ ĐÔNG',
+                boPhan: 'Kho Trung Tâm',
+                nhanVien: '',
+                sdt: '',
+                soPhieu: generateVoucherNumber(),
+                ngay: new Date().getDate().toString().padStart(2, '0'),
+                thang: (new Date().getMonth() + 1).toString().padStart(2, '0'),
+                nam: new Date().getFullYear().toString(),
+            });
+
+            const [generalInfo, setGeneralInfo] = useState({
+                nguoiNhan: 'Kho Đèn Led Việt Nam',
+                diaChi: 'Thịnh Liệt - 0974072635',
+                lyDo: 'Xuất bán hàng hóa',
+            });
+
+            const [items, setItems] = useState([
+                { id: 1, name: 'DC 15 TAY XANH', code: '01', unit: 'Cái', actualQty: '1', price: '2200000', total: 2200000 },
+            ]);
+
+            const [footerInfo, setFooterInfo] = useState({
+                chungTuGoc: 'không'
+            });
+
+            const [fees, setFees] = useState({
+                vat: 0,
+                shipping: 0
+            });
+
+            const handleHeaderChange = (e) => {
+                const { name, value } = e.target;
+                setHeaderInfo({ ...headerInfo, [name]: value });
+            };
+
+            const handleGeneralChange = (e) => {
+                const { name, value } = e.target;
+                setGeneralInfo({ ...generalInfo, [name]: value });
+            };
+
+            const handleItemChange = (id, field, value) => {
+                const updatedItems = items.map(item => {
+                    if (item.id === id) {
+                        const updatedItem = { ...item, [field]: value };
+                        if (field === 'actualQty' || field === 'price') {
+                            const qty = parseFloat(updatedItem.actualQty) || 0;
+                            const price = parseFloat(updatedItem.price.replace(/,/g, '')) || 0;
+                            updatedItem.total = qty * price;
+                        }
+                        return updatedItem;
+                    }
+                    return item;
+                });
+                setItems(updatedItems);
+            };
+
+            const addItem = () => {
+                const newItem = {
+                    id: Date.now(),
+                    name: '', code: '', unit: '', actualQty: '', price: '', total: 0
+                };
+                setItems([...items, newItem]);
+            };
+
+            const removeItem = (id) => {
+                if (items.length > 1) {
+                    setItems(items.filter(item => item.id !== id));
+                }
+            };
+
+            const handleFeeChange = (field, value) => {
+                const numericValue = value.replace(/\D/g, '');
+                setFees({ ...fees, [field]: numericValue ? parseInt(numericValue, 10) : 0 });
+            };
+
+            // --- XỬ LÝ EXCEL ---
+            const exportToExcel = () => {
+                const wb = XLSX.utils.book_new();
+
+                // Dữ liệu hàng hóa
+                const itemsData = items.map((item, index) => ({
+                    STT: index + 1,
+                    ID: item.id,
+                    TenHangHoa: item.name,
+                    MaSo: item.code,
+                    DonViTinh: item.unit,
+                    SoLuong: item.actualQty,
+                    DonGia: item.price,
+                    ThanhTien: item.total
+                }));
+                const wsItems = XLSX.utils.json_to_sheet(itemsData);
+                XLSX.utils.book_append_sheet(wb, wsItems, "ChiTietHangHoa");
+
+                // Dữ liệu thông tin chung (Header, General, Fees, Footer)
+                const metaData = [
+                    { Key: 'donVi', Value: headerInfo.donVi },
+                    { Key: 'boPhan', Value: headerInfo.boPhan },
+                    { Key: 'nhanVien', Value: headerInfo.nhanVien },
+                    { Key: 'sdt', Value: headerInfo.sdt },
+                    { Key: 'soPhieu', Value: headerInfo.soPhieu },
+                    { Key: 'ngay', Value: headerInfo.ngay },
+                    { Key: 'thang', Value: headerInfo.thang },
+                    { Key: 'nam', Value: headerInfo.nam },
+                    { Key: 'nguoiNhan', Value: generalInfo.nguoiNhan },
+                    { Key: 'diaChi', Value: generalInfo.diaChi },
+                    { Key: 'lyDo', Value: generalInfo.lyDo },
+                    { Key: 'chungTuGoc', Value: footerInfo.chungTuGoc },
+                    { Key: 'vat', Value: fees.vat },
+                    { Key: 'shipping', Value: fees.shipping }
+                ];
+                const wsMeta = XLSX.utils.json_to_sheet(metaData);
+                XLSX.utils.book_append_sheet(wb, wsMeta, "ThongTinChung");
+
+                // Lưu file
+                XLSX.writeFile(wb, `${headerInfo.soPhieu}.xlsx`);
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const data = new Uint8Array(event.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+
+                    try {
+                        // Đọc Metadata
+                        const wsMeta = workbook.Sheets["ThongTinChung"];
+                        if (wsMeta) {
+                            const metaData = XLSX.utils.sheet_to_json(wsMeta);
+                            const metaMap = {};
+                            metaData.forEach(row => { metaMap[row.Key] = row.Value || ''; });
+
+                            setHeaderInfo({
+                                donVi: metaMap.donVi, boPhan: metaMap.boPhan,
+                                nhanVien: metaMap.nhanVien, sdt: metaMap.sdt,
+                                soPhieu: metaMap.soPhieu, ngay: metaMap.ngay,
+                                thang: metaMap.thang, nam: metaMap.nam
+                            });
+                            setGeneralInfo({
+                                nguoiNhan: metaMap.nguoiNhan, diaChi: metaMap.diaChi, lyDo: metaMap.lyDo
+                            });
+                            setFooterInfo({ chungTuGoc: metaMap.chungTuGoc });
+                            setFees({
+                                vat: parseInt(metaMap.vat) || 0,
+                                shipping: parseInt(metaMap.shipping) || 0
+                            });
+                        }
+
+                        // Đọc Items
+                        const wsItems = workbook.Sheets["ChiTietHangHoa"];
+                        if (wsItems) {
+                            const itemsData = XLSX.utils.sheet_to_json(wsItems);
+                            const parsedItems = itemsData.map(row => ({
+                                id: row.ID || Date.now() + Math.random(),
+                                name: row.TenHangHoa || '',
+                                code: row.MaSo || '',
+                                unit: row.DonViTinh || '',
+                                actualQty: row.SoLuong || '',
+                                price: row.DonGia || '',
+                                total: row.ThanhTien || 0
+                            }));
+                            setItems(parsedItems.length > 0 ? parsedItems : items);
+                        }
+                    } catch (error) {
+                        alert("File Excel không đúng định dạng của hệ thống!");
+                    }
+                    
+                    // Reset input file
+                    fileInputRef.current.value = "";
+                };
+                reader.readAsArrayBuffer(file);
+            };
+
+            const triggerFileInput = () => {
+                fileInputRef.current.click();
+            };
+
+            const handlePrint = () => {
+                window.print();
+            };
+
+            const itemTotal = useMemo(() => {
+                return items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
+            }, [items]);
+
+            const grandTotal = useMemo(() => {
+                return itemTotal + Number(fees.vat) + Number(fees.shipping);
+            }, [itemTotal, fees]);
+
+            const totalAmountWords = useMemo(() => {
+                return numberToWordsVietnamese(grandTotal);
+            }, [grandTotal]);
+
+            const inputBase = "focus:outline-none bg-transparent px-1 py-0.5 hover:bg-gray-100 rounded print:p-0 print:hover:bg-transparent";
+
+            return (
+                <div className="py-8 print:py-0 text-[15px] text-black">
+                    
+                    {/* Thanh công cụ */}
+                    <div className="max-w-[21cm] mx-auto mb-4 flex flex-wrap justify-between items-center gap-3 print:hidden">
+                        
+                        {/* Nhóm nút Excel */}
+                        <div className="flex gap-2">
+                            <input 
+                                type="file" 
+                                accept=".xlsx, .xls" 
+                                ref={fileInputRef} 
+                                onChange={handleFileUpload} 
+                                className="hidden" 
+                            />
+                            <button 
+                                onClick={triggerFileInput}
+                                className="flex items-center gap-2 bg-yellow-500 text-white px-4 py-2 rounded shadow hover:bg-yellow-600 transition"
+                                title="Mở file Excel phiếu xuất kho cũ để chỉnh sửa"
+                            >
+                                <UploadIcon /> Nhập Excel
+                            </button>
+                            <button 
+                                onClick={exportToExcel}
+                                className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded shadow hover:bg-indigo-700 transition"
+                                title="Lưu phiếu hiện tại thành file Excel"
+                            >
+                                <DownloadIcon /> Xuất Excel
+                            </button>
+                        </div>
+
+                        {/* Nhóm nút In ấn */}
+                        <div className="flex gap-2">
+                            <button 
+                                onClick={() => setIsEditing(!isEditing)}
+                                className={`flex items-center gap-2 px-4 py-2 rounded shadow transition ${
+                                    isEditing ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-800 hover:bg-gray-300'
+                                }`}
+                            >
+                                {isEditing ? <CheckIcon /> : <EditIcon />}
+                                {isEditing ? 'Hoàn tất chỉnh sửa' : 'Bật chế độ sửa'}
+                            </button>
+
+                            <button 
+                                onClick={handlePrint}
+                                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded shadow hover:bg-blue-700 transition"
+                            >
+                                <PrinterIcon /> In Phiếu
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Trang A4 */}
+                    <div className="max-w-[21cm] min-h-[29.7cm] mx-auto bg-white p-10 shadow-lg print:shadow-none print:m-0 print:w-full print:p-0 relative">
+                        
+                        {/* --- HEADER --- */}
+                        <div className="flex justify-between items-start mb-6">
+                            <div className="w-1/2">
+                                <div className="flex items-center mb-1">
+                                    <span className="font-bold mr-2 whitespace-nowrap">Đơn vị:</span>
+                                    <input type="text" name="donVi" value={headerInfo.donVi} onChange={handleHeaderChange} className={`w-full font-bold uppercase ${inputBase}`} />
+                                </div>
+                                <div className="flex items-center">
+                                    <span className="font-bold mr-2 whitespace-nowrap">Bộ phận:</span>
+                                    <input type="text" name="boPhan" value={headerInfo.boPhan} onChange={handleHeaderChange} className={`w-full ${inputBase}`} />
+                                </div>
+                                <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                                    <input type="text" name="nhanVien" value={headerInfo.nhanVien} onChange={handleHeaderChange} className={`w-full text-black italic placeholder-gray-400 ${inputBase}`} placeholder="Tên nhân viên bán hàng..." />
+                                    <input type="text" name="sdt" value={headerInfo.sdt} onChange={handleHeaderChange} className={`w-full text-black italic placeholder-gray-400 mt-1 ${inputBase}`} placeholder="Số điện thoại..." />
+                                </div>
+                            </div>
+                            <div className="w-1/2">
+                                {/* Dành chỗ trống để cân bằng 2 bên */}
+                            </div>
+                        </div>
+
+                        {/* --- TITLE --- */}
+                        <div className="text-center mb-6 relative">
+                            <h1 className="text-[26px] font-bold mb-2">PHIẾU XUẤT KHO</h1>
+                            <div className="italic flex justify-center items-center gap-1 mb-1 text-sm">
+                                Ngày <input type="text" name="ngay" value={headerInfo.ngay} onChange={handleHeaderChange} className={`w-6 text-center ${inputBase}`} /> 
+                                tháng <input type="text" name="thang" value={headerInfo.thang} onChange={handleHeaderChange} className={`w-6 text-center ${inputBase}`} /> 
+                                năm <input type="text" name="nam" value={headerInfo.nam} onChange={handleHeaderChange} className={`w-10 text-center ${inputBase}`} />
+                            </div>
+                            <div className="flex justify-center items-center text-[13px] text-gray-700 gap-1">
+                                Số: <input type="text" name="soPhieu" value={headerInfo.soPhieu} onChange={handleHeaderChange} className={`w-32 text-center text-black font-medium ${inputBase}`} />
+                            </div>
+                        </div>
+
+                        {/* --- GENERAL INFO --- */}
+                        <div className="mb-4 space-y-2">
+                            <div className="flex items-end">
+                                <span className="whitespace-nowrap mr-2">- Họ và tên người nhận hàng:</span>
+                                <input type="text" name="nguoiNhan" value={generalInfo.nguoiNhan} onChange={handleGeneralChange} className={`flex-1 ${inputBase}`} />
+                                <span className="whitespace-nowrap mx-2">Địa chỉ (bộ phận):</span>
+                                <input type="text" name="diaChi" value={generalInfo.diaChi} onChange={handleGeneralChange} className={`flex-1 ${inputBase}`} />
+                            </div>
+                            <div className="flex items-end">
+                                <span className="whitespace-nowrap mr-2">- Lý do xuất kho:</span>
+                                <input type="text" name="lyDo" value={generalInfo.lyDo} onChange={handleGeneralChange} className={`flex-1 w-full ${inputBase}`} />
+                            </div>
+                        </div>
+
+                        {/* --- TABLE --- */}
+                        <div className="mb-4 relative">
+                            <table className="w-full border-collapse border border-black text-center text-sm">
+                                <thead>
+                                    <tr>
+                                        <th className="border border-black p-1 w-10">STT</th>
+                                        <th className="border border-black p-1">Tên hàng hóa</th>
+                                        <th className="border border-black p-1 w-16">Mã số</th>
+                                        <th className="border border-black p-1 w-16">Đơn vị tính</th>
+                                        <th className="border border-black p-1 w-20">Số lượng</th>
+                                        <th className="border border-black p-1 w-24">Đơn giá</th>
+                                        <th className="border border-black p-1 w-28">Thành tiền</th>
+                                        {isEditing && <th className="border border-black w-8 print:hidden"></th>}
+                                    </tr>
+                                    <tr className="font-bold bg-gray-50 print:bg-transparent">
+                                        <td className="border border-black py-1">A</td>
+                                        <td className="border border-black py-1">B</td>
+                                        <td className="border border-black py-1">C</td>
+                                        <td className="border border-black py-1">D</td>
+                                        <td className="border border-black py-1">1</td>
+                                        <td className="border border-black py-1">2</td>
+                                        <td className="border border-black py-1">3</td>
+                                        {isEditing && <td className="border border-black print:hidden"></td>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {items.map((item, index) => (
+                                        <tr key={item.id} className="group hover:bg-gray-50 print:hover:bg-transparent">
+                                            <td className="border border-black p-1">{index + 1}</td>
+                                            <td className="border border-black p-0 text-left">
+                                                <input type="text" value={item.name} onChange={(e) => handleItemChange(item.id, 'name', e.target.value)} className="w-full h-full px-2 py-1.5 bg-transparent focus:outline-none focus:bg-blue-50" placeholder="Tên hàng hóa..." />
+                                            </td>
+                                            <td className="border border-black p-0">
+                                                <input type="text" value={item.code} onChange={(e) => handleItemChange(item.id, 'code', e.target.value)} className="w-full h-full px-1 py-1.5 text-center bg-transparent focus:outline-none focus:bg-blue-50" />
+                                            </td>
+                                            <td className="border border-black p-0">
+                                                <input type="text" value={item.unit} onChange={(e) => handleItemChange(item.id, 'unit', e.target.value)} className="w-full h-full px-1 py-1.5 text-center bg-transparent focus:outline-none focus:bg-blue-50" />
+                                            </td>
+                                            <td className="border border-black p-0">
+                                                <input type="number" value={item.actualQty} onChange={(e) => handleItemChange(item.id, 'actualQty', e.target.value)} className="w-full h-full px-1 py-1.5 text-center bg-transparent focus:outline-none focus:bg-blue-50" />
+                                            </td>
+                                            <td className="border border-black p-0">
+                                                <input type="text" value={item.price} onChange={(e) => handleItemChange(item.id, 'price', e.target.value)} className="w-full h-full px-1 py-1.5 text-right bg-transparent focus:outline-none focus:bg-blue-50" placeholder="0" />
+                                            </td>
+                                            <td className="border border-black p-1 text-right font-bold">
+                                                {formatCurrency(item.total)}
+                                            </td>
+                                            {isEditing && (
+                                                <td className="border border-black p-0 print:hidden text-center">
+                                                    <button onClick={() => removeItem(item.id)} className="text-red-500 hover:text-red-700 p-1 mx-auto flex justify-center w-full" title="Xóa dòng">
+                                                        <TrashIcon />
+                                                    </button>
+                                                </td>
+                                            )}
+                                        </tr>
+                                    ))}
+                                    <tr className="font-bold">
+                                        <td colSpan={6} className="border border-black p-2 text-center">Cộng tiền hàng</td>
+                                        <td className="border border-black p-2 text-right">{formatCurrency(itemTotal)}</td>
+                                        {isEditing && <td className="border border-black print:hidden"></td>}
+                                    </tr>
+                                    <tr className="font-bold">
+                                        <td colSpan={6} className="border border-black p-1.5 text-center text-gray-700">VAT (nếu có)</td>
+                                        <td className="border border-black p-0">
+                                            <input type="text" value={fees.vat === 0 ? '' : formatCurrency(fees.vat)} onChange={(e) => handleFeeChange('vat', e.target.value)} className="w-full h-full px-1 py-1 text-right bg-transparent focus:outline-none focus:bg-blue-50" placeholder="0" />
+                                        </td>
+                                        {isEditing && <td className="border border-black print:hidden"></td>}
+                                    </tr>
+                                    <tr className="font-bold">
+                                        <td colSpan={6} className="border border-black p-1.5 text-center text-gray-700">Phí vận chuyển / Phí khác</td>
+                                        <td className="border border-black p-0">
+                                            <input type="text" value={fees.shipping === 0 ? '' : formatCurrency(fees.shipping)} onChange={(e) => handleFeeChange('shipping', e.target.value)} className="w-full h-full px-1 py-1 text-right bg-transparent focus:outline-none focus:bg-blue-50" placeholder="0" />
+                                        </td>
+                                        {isEditing && <td className="border border-black print:hidden"></td>}
+                                    </tr>
+                                    <tr className="font-bold text-[16px] bg-gray-50 print:bg-transparent">
+                                        <td colSpan={6} className="border border-black p-2 text-center text-black">TỔNG CỘNG</td>
+                                        <td className="border border-black p-2 text-right text-black">{formatCurrency(grandTotal)}</td>
+                                        {isEditing && <td className="border border-black print:hidden"></td>}
+                                    </tr>
+                                </tbody>
+                            </table>
+                            
+                            {isEditing && (
+                                <button 
+                                    onClick={addItem}
+                                    className="mt-2 text-sm text-blue-600 flex items-center gap-1 hover:text-blue-800 print:hidden"
+                                >
+                                    <PlusIcon /> Thêm dòng mới
+                                </button>
+                            )}
+                        </div>
+
+                        {/* --- FOOTER INFO --- */}
+                        <div className="mb-6 space-y-2">
+                            <div className="flex items-end">
+                                <span className="whitespace-nowrap mr-2">- Tổng số tiền (viết bằng chữ):</span>
+                                <span className="italic font-bold">{totalAmountWords}</span>
+                            </div>
+                            <div className="flex items-end">
+                                <span className="whitespace-nowrap mr-2">- Số chứng từ gốc kèm theo:</span>
+                                <input type="text" value={footerInfo.chungTuGoc} onChange={(e) => setFooterInfo({chungTuGoc: e.target.value})} className={`flex-1 ${inputBase}`} />
+                            </div>
+                        </div>
+
+                        {/* --- SIGNATURES --- */}
+                        <div className="mt-8 flex justify-between text-center pb-20">
+                            <div className="w-1/4">
+                                <div className="font-bold mb-1">Người lập phiếu</div>
+                                <div className="italic text-xs">(Ký, họ tên)</div>
+                            </div>
+                            <div className="w-1/4">
+                                <div className="font-bold mb-1">Người nhận hàng</div>
+                                <div className="italic text-xs">(Ký, họ tên)</div>
+                            </div>
+                            <div className="w-1/4">
+                                <div className="font-bold mb-1">Kế toán trưởng</div>
+                                <div className="italic text-xs">(Hoặc bộ phận có nhu cầu nhập)</div>
+                                <div className="italic text-xs">(Ký, họ tên)</div>
+                            </div>
+                            <div className="w-1/4">
+                                <div className="font-bold mb-1">Giám đốc</div>
+                                <div className="italic text-xs">(Ký, họ tên)</div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
